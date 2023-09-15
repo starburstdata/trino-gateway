@@ -13,12 +13,17 @@ import io.trino.gateway.proxyserver.wrapper.MultiReadHttpServletRequest;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.HttpMethod;
@@ -56,18 +61,25 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
 
   private final Meter requestMeter;
   private final int serverApplicationPort;
+  private final Map<Integer, String> requestIdBackendMap = new HashMap<>();
+  private final Set<String> cookiePaths;
+  private final Set<String> logoutCookiePaths;
 
   public QueryIdCachingProxyHandler(
       QueryHistoryManager queryHistoryManager,
       RoutingManager routingManager,
       RoutingGroupSelector routingGroupSelector,
       int serverApplicationPort,
-      Meter requestMeter) {
+      Meter requestMeter,
+      Set<String> cookiePaths,
+      Set<String> logoutCookiePaths) {
     this.requestMeter = requestMeter;
     this.routingManager = routingManager;
     this.routingGroupSelector = routingGroupSelector;
     this.queryHistoryManager = queryHistoryManager;
     this.serverApplicationPort = serverApplicationPort;
+    this.cookiePaths = cookiePaths;
+    this.logoutCookiePaths = logoutCookiePaths;
   }
 
   protected static String extractQueryIdIfPresent(String path, String queryParams) {
@@ -127,6 +139,22 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
     return extractQueryIdIfPresent(path, queryParams);
   }
 
+  String getBackendForRequest(HttpServletRequest request) {
+    String routingGroup = routingGroupSelector.findRoutingGroup(request);
+    String user = getQueryUser(request);
+    if (!Strings.isNullOrEmpty(routingGroup)) {
+      // This falls back on adhoc backend if there are no cluster found for the routing group.
+      return routingManager.provideBackendForRoutingGroup(routingGroup, user);
+    } else {
+      return routingManager.provideAdhocBackend(user);
+    }
+  }
+
+  private boolean doRecordQueryId(HttpServletRequest request) {
+    String requestPath = request.getRequestURI();
+    return requestPath.startsWith(V1_STATEMENT_PATH) && request.getMethod().equals(HttpMethod.POST);
+    //TODO: add queryPaths config
+  }
 
   static void setForwardedHostHeaderOnProxyRequest(HttpServletRequest request,
                                                    Request proxyRequest) {
@@ -229,31 +257,65 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
     return true;
   }
 
+  public boolean isKnownSessionId(String sessionId) {
+    return !Strings.isNullOrEmpty(routingManager.findBackendForUiCookie(sessionId));
+  }
+
   @Override
-  public String rewriteTarget(HttpServletRequest request) {
+  public Optional<Cookie> deleteCookie(HttpServletRequest clientRequest) {
+    Optional<Cookie> cookie = Arrays.stream(clientRequest.getCookies()).filter(
+        c -> c.getName().equalsIgnoreCase("JSESSIONID")).findAny();
+    Optional<String> sessionId = cookie.map(cookie1 -> cookie1.getValue().split("\\.")[0]);
+    Optional<String> path = cookie.map(cookie1 -> cookie1.getPath());
+    if (cookie.isPresent()
+            && (logoutCookiePaths.contains(clientRequest.getRequestURI())
+            || (!this.isKnownSessionId(sessionId.get())))) {
+      cookie.get().setMaxAge(0);
+      cookie.get().setValue("delete");
+      cookie.get().setPath(path.get());
+
+      routingManager.deleteUiCookie(sessionId.get());
+      return cookie;
+    }
+    return Optional.empty();
+  }
+
+  @Override
+  public String rewriteTarget(HttpServletRequest request, int requestId) {
     /* Here comes the load balancer / gateway */
     String backendAddress = "http://localhost:" + serverApplicationPort;
 
-    // Only load balance trino query APIs.
+    // Only load balance trino query and oauth APIs.
     if (isPathWhiteListed(request.getRequestURI())) {
       String queryId = extractQueryIdIfPresent(request);
 
       // Find query id and get url from cache
       if (!Strings.isNullOrEmpty(queryId)) {
         backendAddress = routingManager.findBackendForQueryId(queryId);
+      } else if (doRecordQueryId(request)) {
+        backendAddress = getBackendForRequest(request);
+        log.debug("mapping " + requestId + " to " + backendAddress);
+        requestIdBackendMap.put(requestId, backendAddress);
+      } else if (!Strings.isNullOrEmpty(request.getRequestedSessionId())) {
+        //pin browser sessions to the same backend based on jsessionid, but load balance queries
+        backendAddress = routingManager.findBackendForUiCookie(
+                request.getRequestedSessionId().split("\\.")[0]);
+        if (Strings.isNullOrEmpty(backendAddress)) {
+          log.error("Unknown session id: " + request.getRequestedSessionId()
+                  + " for request to: " + request.getRequestURI());
+          backendAddress = getBackendForRequest(request);
+        }
       } else {
-        String routingGroup = routingGroupSelector.findRoutingGroup(request);
-        String user = request.getHeader(USER_HEADER);
-        if (!Strings.isNullOrEmpty(routingGroup)) {
-          // This falls back on adhoc backend if there are no cluster found for the routing group.
-          backendAddress = routingManager.provideBackendForRoutingGroup(routingGroup, user);
-        } else {
-          backendAddress = routingManager.provideAdhocBackend(user);
+        backendAddress = getBackendForRequest(request);
+        if (cookiePaths.contains(request.getRequestURI())) {
+          routingManager.setBackendForCookie(request.getSession().getId(), backendAddress);
+          log.debug("using session id " + request.getSession().getId());
         }
       }
       // set target backend so that we could save queryId to backend mapping later.
       ((MultiReadHttpServletRequest) request).addHeader(PROXY_TARGET_HEADER, backendAddress);
     }
+
     if (isAuthEnabled() && request.getHeader("Authorization") != null) {
       if (!handleAuthRequest(request)) {
         // This implies the AuthRequest was not authenticated, hence we error out from here.
@@ -261,6 +323,7 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
         return null;
       }
     }
+
     String targetLocation =
         backendAddress
             + request.getRequestURI()
@@ -285,53 +348,71 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
       byte[] buffer,
       int offset,
       int length,
-      Callback callback) {
+      Callback callback,
+      int requestId) {
     try {
-      String requestPath = request.getRequestURI();
-      if (requestPath.startsWith(V1_STATEMENT_PATH)
-          && request.getMethod().equals(HttpMethod.POST)) {
-        String output;
-        boolean isGZipEncoding = isGZipEncoding(response);
-        if (isGZipEncoding) {
-          output = plainTextFromGz(buffer);
-        } else {
-          output = new String(buffer);
-        }
-        log.debug("For Request [{}] got Response output [{}]", request.getRequestURI(), output);
-
-        QueryHistoryManager.QueryDetail queryDetail = getQueryDetailsFromRequest(request);
-        log.debug("Extracting Proxy destination : [{}] for request : [{}]",
-            queryDetail.getBackendUrl(), request.getRequestURI());
-
-        if (response.getStatus() == HttpStatus.OK_200) {
-          HashMap<String, String> results = OBJECT_MAPPER.readValue(output, HashMap.class);
-          queryDetail.setQueryId(results.get("id"));
-
-          if (!Strings.isNullOrEmpty(queryDetail.getQueryId())) {
-            routingManager.setBackendForQueryId(
-                queryDetail.getQueryId(), queryDetail.getBackendUrl());
-            log.debug(
-                "QueryId [{}] mapped with proxy [{}]",
-                queryDetail.getQueryId(),
-                queryDetail.getBackendUrl());
-          } else {
-            log.debug("QueryId [{}] could not be cached", queryDetail.getQueryId());
-          }
-        } else {
-          log.error(
-              "Non OK HTTP Status code with response [{}] , Status code [{}]",
-              output,
-              response.getStatus());
-        }
-        // Saving history at gateway.
-        queryHistoryManager.submitQueryDetail(queryDetail);
+      if (doRecordQueryId(request)) {
+        recordBackendForQueryId(request, response, buffer, requestId);
       } else {
-        log.debug("SKIPPING For {}", requestPath);
+        log.debug("SKIPPING For {}", request.getRequestURI());
       }
     } catch (Exception e) {
       log.error("Error in proxying falling back to super call", e);
     }
     super.postConnectionHook(request, response, buffer, offset, length, callback);
+  }
+
+  void recordBackendForQueryId(
+          HttpServletRequest request,
+          HttpServletResponse response,
+          byte[] buffer,
+          int requestId)
+          throws IOException {
+    String output;
+    boolean isGZipEncoding = isGZipEncoding(response);
+    if (isGZipEncoding) {
+      output = plainTextFromGz(buffer);
+    } else {
+      output = new String(buffer);
+    }
+    log.debug("For Request [{}] got Response output [{}]", request.getRequestURI(), output);
+    log.debug("Request Id: " + requestId);
+
+    QueryHistoryManager.QueryDetail queryDetail = getQueryDetailsFromRequest(request);
+    String backendUrl = Strings.isNullOrEmpty(queryDetail.getBackendUrl())
+            ? requestIdBackendMap.get(requestId)
+            : queryDetail.getBackendUrl();
+    if (backendUrl == null) {
+      log.warn("request id not found in "
+              + Arrays.toString(requestIdBackendMap.keySet().toArray()));
+    }
+    log.debug("Extracting Proxy destination : [{}] for request : [{}]",
+            backendUrl, request.getRequestURI());
+
+    if (response.getStatus() == HttpStatus.OK_200) {
+      HashMap<String, String> results = OBJECT_MAPPER.readValue(output, HashMap.class);
+      queryDetail.setQueryId(results.get("id"));
+
+      if (!Strings.isNullOrEmpty(queryDetail.getQueryId())) {
+        //TODO: use the DB to back the queryId cache so it is shared across gateway instances
+        routingManager.setBackendForQueryId(
+                queryDetail.getQueryId(), backendUrl);
+        log.debug(
+                "QueryId [{}] mapped with proxy [{}]",
+                queryDetail.getQueryId(),
+                backendUrl);
+        requestIdBackendMap.remove(requestId);
+      } else {
+        log.debug("QueryId [{}] could not be cached", queryDetail.getQueryId());
+      }
+    } else {
+      log.error(
+              "Non OK HTTP Status code with response [{}] , Status code [{}]",
+              output,
+              response.getStatus());
+    }
+    // Saving history at gateway.
+    queryHistoryManager.submitQueryDetail(queryDetail);
   }
 
   private QueryHistoryManager.QueryDetail getQueryDetailsFromRequest(HttpServletRequest request)

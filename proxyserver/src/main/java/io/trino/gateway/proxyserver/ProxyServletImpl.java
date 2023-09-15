@@ -1,6 +1,10 @@
 package io.trino.gateway.proxyserver;
 
+import java.util.Arrays;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+
+import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -61,13 +65,33 @@ public class ProxyServletImpl extends ProxyServlet.Transparent {
   protected String rewriteTarget(HttpServletRequest request) {
     String target = null;
     if (proxyHandler != null) {
-      target = proxyHandler.rewriteTarget(request);
+      target = proxyHandler.rewriteTarget(request, this.getRequestId(request));
     }
     if (target == null) {
       target = super.rewriteTarget(request);
     }
     log.debug("Target : " + target);
     return target;
+  }
+
+  @Override
+  protected void onServerResponseHeaders(
+          HttpServletRequest clientRequest,
+          HttpServletResponse proxyResponse,
+          Response serverResponse) {
+    // Clean up session cookie. The session cookie is used to pin the client to a backend during
+    // the oauth handshake. If an old cookie is reused for a new handshake it causes a failure.
+    if (clientRequest.getCookies() == null) {
+      super.onServerResponseHeaders(clientRequest, proxyResponse, serverResponse);
+      return;
+    }
+
+    Optional<Cookie> deleteCookie = this.proxyHandler.deleteCookie(clientRequest);
+    if (deleteCookie.isPresent()) {
+      proxyResponse.addCookie(deleteCookie.get());
+    }
+
+    super.onServerResponseHeaders(clientRequest, proxyResponse, serverResponse);
   }
 
   /**
@@ -95,7 +119,8 @@ public class ProxyServletImpl extends ProxyServlet.Transparent {
             "[{}] proxying content to downstream: [{}] bytes", this.getRequestId(request), length);
       }
       if (this.proxyHandler != null) {
-        proxyHandler.postConnectionHook(request, response, buffer, offset, length, callback);
+        proxyHandler.postConnectionHook(
+                request, response, buffer, offset, length, callback, this.getRequestId(request));
       } else {
         super.onResponseContent(request, response, proxyResponse, buffer, offset, length, callback);
       }

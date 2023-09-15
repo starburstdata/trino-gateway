@@ -1,5 +1,6 @@
 package io.trino.gateway.ha.router;
 
+import com.google.common.base.Strings;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -31,12 +32,17 @@ import lombok.extern.slf4j.Slf4j;
 public abstract class RoutingManager {
   private static final Random RANDOM = new Random();
   private final LoadingCache<String, String> queryIdBackendCache;
+  private final LoadingCache<String, String> uiCookieBackendCache;
   private ExecutorService executorService = Executors.newFixedThreadPool(5);
   private GatewayBackendManager gatewayBackendManager;
   private ConcurrentHashMap<String, Boolean> backendToHealth;
+  CookieCacheManager cacheManager;
 
-  public RoutingManager(GatewayBackendManager gatewayBackendManager) {
+  public RoutingManager(
+          GatewayBackendManager gatewayBackendManager,
+          CookieCacheManager cacheManager) {
     this.gatewayBackendManager = gatewayBackendManager;
+    this.cacheManager = cacheManager;
     queryIdBackendCache =
         CacheBuilder.newBuilder()
             .maximumSize(10000)
@@ -48,7 +54,17 @@ public abstract class RoutingManager {
                     return findBackendForUnknownQueryId(queryId);
                   }
                 });
-
+    uiCookieBackendCache =
+            CacheBuilder.newBuilder()
+                    .maximumSize(10000)
+                    .expireAfterAccess(30, TimeUnit.MINUTES)
+                    .build(
+                          new CacheLoader<String, String>() {
+                            @Override
+                            public String load(String queryId) {
+                              return lookupBackendForUiCookie(queryId);
+                            }
+                          });
     this.backendToHealth = new ConcurrentHashMap<String, Boolean>();
   }
 
@@ -58,6 +74,15 @@ public abstract class RoutingManager {
 
   public void setBackendForQueryId(String queryId, String backend) {
     queryIdBackendCache.put(queryId, backend);
+  }
+
+  public void setBackendForCookie(String uiCookie, String backend) {
+    cacheManager.submitCookieBackend(uiCookie, backend);
+  }
+
+  public boolean deleteUiCookie(String uiCookie) {
+    uiCookieBackendCache.invalidate(uiCookie);
+    return cacheManager.removeCookie(uiCookie);
   }
 
   /**
@@ -110,6 +135,17 @@ public abstract class RoutingManager {
     }
     return backendAddress;
   }
+
+  public String findBackendForUiCookie(String uiCookie) {
+    try {
+      return uiCookieBackendCache.get(uiCookie);
+    } catch (ExecutionException e) {
+      log.error("Exception while loading UI Cookie backend from cache {}", e.getLocalizedMessage());
+    }
+    //TODO: consider using optionals for all of the places where nulls or defaults are returned
+    return null;
+  }
+
 
   public void upateBackEndHealth(String backendId, Boolean value) {
     log.info("backend {} isHealthy {}", backendId, value);
@@ -170,6 +206,16 @@ public abstract class RoutingManager {
     return gatewayBackendManager.getActiveAdhocBackends().get(0).getProxyTo();
   }
 
+  protected String lookupBackendForUiCookie(String uiCookie) {
+    //TODO: this may be redundant wrt findBackendForUiCookie - check and see what the difference is?
+    String backend = cacheManager.getBackendForCookie(uiCookie);
+    if (!Strings.isNullOrEmpty(backend)) {
+      return backend;
+    }
+    // Return random backend if not found
+    log.warn(String.format("No backend found for UI Cookie %s!!", uiCookie));
+    return provideAdhocBackend("");
+  }
 
   // Predicate helper function to remove the backends from the list
   // We are returning the unhealthy (not healthy) 

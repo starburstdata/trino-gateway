@@ -64,6 +64,7 @@ public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, E
   private final Set<String> cookiePaths;
   private final Set<String> logoutCookiePaths;
   private final AuthFilter authenticationFilter;
+  private final List<String> extraWhitelistPaths;
 
   public HaGatewayProviderModule(HaGatewayConfiguration configuration, Environment environment) {
     super(configuration, environment);
@@ -87,6 +88,7 @@ public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, E
         presetUsers);
     authenticationFilter = getAuthFilter(configuration);
     backendStateConnectionManager = new BackendStateManager(configuration.getBackendState());
+    extraWhitelistPaths = configuration.getExtraWhitelistPaths();
     cookiePaths = configuration.getCookiePaths();
     logoutCookiePaths = configuration.getLogoutCookiePaths();
   }
@@ -167,6 +169,7 @@ public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, E
         routingGroupSelector,
         getApplicationPort(),
         requestMeter,
+        extraWhitelistPaths,
         cookiePaths,
         logoutCookiePaths);
   }

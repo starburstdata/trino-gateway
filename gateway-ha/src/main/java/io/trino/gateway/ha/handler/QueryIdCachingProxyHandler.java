@@ -61,6 +61,7 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
 
   private final Meter requestMeter;
   private final int serverApplicationPort;
+  private final List<String> extraWhitelistPaths;
   private final Map<Integer, String> requestIdBackendMap = new HashMap<>();
   private final Set<String> cookiePaths;
   private final Set<String> logoutCookiePaths;
@@ -71,6 +72,7 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
       RoutingGroupSelector routingGroupSelector,
       int serverApplicationPort,
       Meter requestMeter,
+      List<String> extraWhitelistPaths,
       Set<String> cookiePaths,
       Set<String> logoutCookiePaths) {
     this.requestMeter = requestMeter;
@@ -78,6 +80,7 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
     this.routingGroupSelector = routingGroupSelector;
     this.queryHistoryManager = queryHistoryManager;
     this.serverApplicationPort = serverApplicationPort;
+    this.extraWhitelistPaths = extraWhitelistPaths;
     this.cookiePaths = cookiePaths;
     this.logoutCookiePaths = logoutCookiePaths;
   }
@@ -246,7 +249,8 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
         || path.startsWith(V1_INFO_PATH)
         || path.startsWith(V1_NODE_PATH)
         || path.startsWith(UI_API_STATS_PATH)
-        || path.startsWith(OAUTH_PATH);
+        || path.startsWith(OAUTH_PATH)
+        || extraWhitelistPaths.stream().anyMatch(s -> path.startsWith(s));
   }
 
   public boolean isAuthEnabled() {

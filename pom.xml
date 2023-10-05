@@ -12,7 +12,7 @@
     <groupId>io.trino.gateway</groupId>
     <artifactId>trino-gateway-parent</artifactId>
     <packaging>pom</packaging>
-    <version>4-SNAPSHOT</version>
+    <version>3</version>
 
     <name>trino-gateway-parent</name>
     <description>A smart load balancer and query router for Trino</description>

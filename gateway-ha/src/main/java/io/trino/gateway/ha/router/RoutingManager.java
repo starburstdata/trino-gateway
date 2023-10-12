@@ -13,6 +13,7 @@ import java.net.URL;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -208,13 +209,8 @@ public abstract class RoutingManager {
 
   protected String lookupBackendForUiCookie(String uiCookie) {
     //TODO: this may be redundant wrt findBackendForUiCookie - check and see what the difference is?
-    String backend = cacheManager.getBackendForCookie(uiCookie);
-    if (!Strings.isNullOrEmpty(backend)) {
-      return backend;
-    }
-    // Return random backend if not found
-    log.warn(String.format("No backend found for UI Cookie %s!!", uiCookie));
-    return provideAdhocBackend("");
+    Optional<String> backend = cacheManager.getBackendForCookie(uiCookie);
+    return backend.orElseGet(() -> provideAdhocBackend(""));
   }
 
   // Predicate helper function to remove the backends from the list

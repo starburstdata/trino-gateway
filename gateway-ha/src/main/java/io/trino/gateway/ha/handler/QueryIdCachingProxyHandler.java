@@ -267,16 +267,17 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
 
   @Override
   public Optional<Cookie> deleteCookie(HttpServletRequest clientRequest) {
+    if (!logoutCookiePaths.contains(clientRequest.getRequestURI())) {
+      return Optional.empty();
+    }
     Optional<Cookie> cookie = Arrays.stream(clientRequest.getCookies()).filter(
         c -> c.getName().equalsIgnoreCase("JSESSIONID")).findAny();
     Optional<String> sessionId = cookie.map(cookie1 -> cookie1.getValue().split("\\.")[0]);
     Optional<String> path = cookie.map(cookie1 -> cookie1.getPath());
-    if (cookie.isPresent()
-            && (logoutCookiePaths.contains(clientRequest.getRequestURI())
-            || (!this.isKnownSessionId(sessionId.get())))) {
+    if (cookie.isPresent()) {
       cookie.get().setMaxAge(0);
       cookie.get().setValue("delete");
-      cookie.get().setPath(path.get());
+      cookie.get().setPath(path.orElse("/"));
 
       routingManager.deleteUiCookie(sessionId.get());
       return cookie;

@@ -4,6 +4,8 @@ import io.trino.gateway.ha.persistence.JdbcConnectionManager;
 import io.trino.gateway.ha.persistence.dao.CookieBackend;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Optional;
+
 @Slf4j
 public class CookieCacheManager {
   private JdbcConnectionManager connectionManager;
@@ -25,11 +27,14 @@ public class CookieCacheManager {
     }
   }
   
-  public String getBackendForCookie(String cookie) {
+  public Optional<String> getBackendForCookie(String cookie) {
     try {
       connectionManager.open();
       CookieBackend cookieBackend = CookieBackend.findById(cookie);
-      return (String) cookieBackend.get(CookieBackend.backend);
+      if (cookieBackend != null) {
+        return Optional.of((String) cookieBackend.get(CookieBackend.backend));
+      }
+      return Optional.empty();
     } finally {
       connectionManager.close();
     }

@@ -18,6 +18,7 @@ import io.trino.gateway.ha.config.UserConfiguration;
 import io.trino.gateway.ha.handler.QueryIdCachingProxyHandler;
 import io.trino.gateway.ha.persistence.JdbcConnectionManager;
 import io.trino.gateway.ha.router.BackendStateManager;
+import io.trino.gateway.ha.router.CookieCacheManager;
 import io.trino.gateway.ha.router.GatewayBackendManager;
 import io.trino.gateway.ha.router.HaGatewayManager;
 import io.trino.gateway.ha.router.HaQueryHistoryManager;
@@ -46,6 +47,7 @@ import io.trino.gateway.proxyserver.ProxyServerConfiguration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, Environment> {
 
@@ -58,8 +60,12 @@ public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, E
   private final LbFormAuthManager formAuthManager;
   private final AuthorizationManager authorizationManager;
   private final BackendStateManager backendStateConnectionManager;
+  private final CookieCacheManager cacheManager;
+  private final Set<String> cookiePaths;
+  private final Set<String> logoutCookiePaths;
   private final AuthFilter authenticationFilter;
   private final List<String> extraWhitelistPaths;
+  private final List<String> extraStatementPaths;
 
   public HaGatewayProviderModule(HaGatewayConfiguration configuration, Environment environment) {
     super(configuration, environment);
@@ -67,8 +73,11 @@ public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, E
     resourceGroupsManager = new HaResourceGroupsManager(connectionManager);
     gatewayBackendManager = new HaGatewayManager(connectionManager);
     queryHistoryManager = new HaQueryHistoryManager(connectionManager);
+    cacheManager = new CookieCacheManager(connectionManager);
     routingManager =
-        new HaRoutingManager(gatewayBackendManager, (HaQueryHistoryManager) queryHistoryManager);
+            new HaRoutingManager(gatewayBackendManager,
+                    queryHistoryManager,
+                    cacheManager);
 
     Map<String, UserConfiguration> presetUsers = configuration.getPresetUsers();
     AuthenticationConfiguration authenticationConfiguration = configuration.getAuthentication();
@@ -81,6 +90,9 @@ public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, E
     authenticationFilter = getAuthFilter(configuration);
     backendStateConnectionManager = new BackendStateManager(configuration.getBackendState());
     extraWhitelistPaths = configuration.getExtraWhitelistPaths();
+    extraStatementPaths = configuration.getExtraStatementPaths();
+    cookiePaths = configuration.getCookiePaths();
+    logoutCookiePaths = configuration.getLogoutCookiePaths();
   }
 
   private LbOAuthManager getOAuthManager(HaGatewayConfiguration configuration) {
@@ -159,7 +171,10 @@ public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, E
         routingGroupSelector,
         getApplicationPort(),
         requestMeter,
-        extraWhitelistPaths);
+        extraWhitelistPaths,
+        extraStatementPaths,
+        cookiePaths,
+        logoutCookiePaths);
   }
 
   protected AuthFilter getAuthFilter(HaGatewayConfiguration configuration) {

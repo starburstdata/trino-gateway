@@ -43,6 +43,12 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
         </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-parser</artifactId>
+            <version>423</version>
+        </dependency>
         <dependency>
             <groupId>io.trino.gateway</groupId>
             <artifactId>baseapp</artifactId>

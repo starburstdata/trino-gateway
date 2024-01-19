@@ -12,6 +12,7 @@ import io.trino.gateway.baseapp.AppModule;
 import io.trino.gateway.ha.config.AuthenticationConfiguration;
 import io.trino.gateway.ha.config.AuthorizationConfiguration;
 import io.trino.gateway.ha.config.HaGatewayConfiguration;
+import io.trino.gateway.ha.config.ProcessedRequestConfig;
 import io.trino.gateway.ha.config.RequestRouterConfiguration;
 import io.trino.gateway.ha.config.RoutingRulesConfiguration;
 import io.trino.gateway.ha.config.UserConfiguration;
@@ -160,9 +161,10 @@ public class HaGatewayProviderModule extends AppModule<HaGatewayConfiguration, E
     RoutingGroupSelector routingGroupSelector = RoutingGroupSelector.byRoutingGroupHeader();
     // Use rules engine if enabled
     RoutingRulesConfiguration routingRulesConfig = getConfiguration().getRoutingRules();
+    ProcessedRequestConfig processedRequestConfig = getConfiguration().getProcessedRequestConfig();
     if (routingRulesConfig.isRulesEngineEnabled()) {
       String rulesConfigPath = routingRulesConfig.getRulesConfigPath();
-      routingGroupSelector = RoutingGroupSelector.byRoutingRulesEngine(rulesConfigPath);
+      routingGroupSelector = RoutingGroupSelector.byRoutingRulesEngine(rulesConfigPath, processedRequestConfig);
     }
 
     return new QueryIdCachingProxyHandler(

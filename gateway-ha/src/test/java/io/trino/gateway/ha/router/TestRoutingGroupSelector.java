@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.trino.gateway.ha.config.ProcessedRequestConfig;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.File;
 import java.io.FileWriter;
@@ -19,6 +20,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 public class TestRoutingGroupSelector {
   public static final String TRINO_SOURCE_HEADER = "X-Trino-Source";
   public static final String TRINO_CLIENT_TAGS_HEADER = "X-Trino-Client-Tags";
+  ProcessedRequestConfig processedRequestConfig = new ProcessedRequestConfig(1_000_000, "email");
 
   @Test
   public void testByRoutingGroupHeader() {
@@ -49,8 +51,7 @@ public class TestRoutingGroupSelector {
   @MethodSource("provideRoutingRuleConfigFiles")
   void testByRoutingRulesEngine(String rulesConfigPath) {
     RoutingGroupSelector routingGroupSelector =
-        RoutingGroupSelector.byRoutingRulesEngine(rulesConfigPath);
-
+        RoutingGroupSelector.byRoutingRulesEngine(rulesConfigPath, processedRequestConfig);
     HttpServletRequest mockRequest = mock(HttpServletRequest.class);
 
     when(mockRequest.getHeader(TRINO_SOURCE_HEADER)).thenReturn("airflow");
@@ -62,7 +63,7 @@ public class TestRoutingGroupSelector {
   @MethodSource("provideRoutingRuleConfigFiles")
   void testByRoutingRulesEngineSpecialLabel(String rulesConfigPath) {
     RoutingGroupSelector routingGroupSelector =
-        RoutingGroupSelector.byRoutingRulesEngine(rulesConfigPath);
+        RoutingGroupSelector.byRoutingRulesEngine(rulesConfigPath, processedRequestConfig);
 
     HttpServletRequest mockRequest = mock(HttpServletRequest.class);
 
@@ -77,7 +78,7 @@ public class TestRoutingGroupSelector {
   @MethodSource("provideRoutingRuleConfigFiles")
   void testByRoutingRulesEngineNoMatch(String rulesConfigPath) {
     RoutingGroupSelector routingGroupSelector =
-        RoutingGroupSelector.byRoutingRulesEngine(rulesConfigPath);
+        RoutingGroupSelector.byRoutingRulesEngine(rulesConfigPath, processedRequestConfig);
 
     HttpServletRequest mockRequest = mock(HttpServletRequest.class);
     // even though special label is present, query is not from airflow.
@@ -103,7 +104,7 @@ public class TestRoutingGroupSelector {
     fw.close();
 
     RoutingGroupSelector routingGroupSelector =
-        RoutingGroupSelector.byRoutingRulesEngine(file.getPath());
+        RoutingGroupSelector.byRoutingRulesEngine(file.getPath(), processedRequestConfig);
 
     HttpServletRequest mockRequest = mock(HttpServletRequest.class);
 

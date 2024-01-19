@@ -29,4 +29,5 @@ public class HaGatewayConfiguration extends AppConfiguration {
   private List<String> extraStatementPaths = new ArrayList<>();
   private Set<String> cookiePaths = new HashSet<>();
   private Set<String> logoutCookiePaths = new HashSet<>();
+  private ProcessedRequestConfig processedRequestConfig = new ProcessedRequestConfig();
 }

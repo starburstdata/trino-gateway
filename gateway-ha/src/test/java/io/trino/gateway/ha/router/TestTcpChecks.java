@@ -11,6 +11,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
+import io.trino.gateway.ha.config.ProcessedRequestConfig;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.net.Socket;
@@ -38,7 +39,7 @@ public class TestTcpChecks {
 
     String rulesFile = "src/test/resources/rules/routing_rules_tcp_connection.yml";
     RoutingGroupSelector routingGroupSelector =
-        RoutingGroupSelector.byRoutingRulesEngine(rulesFile);
+        RoutingGroupSelector.byRoutingRulesEngine(rulesFile, new ProcessedRequestConfig(1_000_000, "email"));
 
     assertEquals("cli", routingGroupSelector.findRoutingGroup(mockRequest));
   }

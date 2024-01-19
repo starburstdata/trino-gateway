@@ -1,7 +1,11 @@
 package io.trino.gateway.ha.router;
 
 import javax.servlet.http.HttpServletRequest;
+
+import com.google.common.collect.ImmutableMap;
 import lombok.extern.slf4j.Slf4j;
+
+import java.util.Map;
 
 /**
  * RoutingGroupSelector provides a way to match an HTTP request to a Gateway routing group.
@@ -30,6 +34,15 @@ public interface RoutingGroupSelector {
    * be determined return null.
    */
   String findRoutingGroup(HttpServletRequest request);
+
+  /**
+   * Preprocess the request to extract useful information. This map is passed to the rules engine
+   * as `supplementalInformation`.
+   */
+  default Map<String, Object>  extractInformation(HttpServletRequest request)
+  {
+    return ImmutableMap.of();
+  }
 
   @Slf4j
   final class Logger {

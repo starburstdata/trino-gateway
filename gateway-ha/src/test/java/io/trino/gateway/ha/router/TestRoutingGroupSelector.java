@@ -8,6 +8,9 @@ import java.io.File;
 import java.io.FileWriter;
 import javax.servlet.http.HttpServletRequest;
 
+import okhttp3.MediaType;
+import okhttp3.Request;
+import okhttp3.RequestBody;
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
@@ -19,6 +22,17 @@ public class TestRoutingGroupSelector {
 
   public void testByRoutingGroupHeader() {
     HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+
+    RequestBody requestBody =
+            RequestBody.create(MediaType.parse("application/json; charset=utf-8"), "abc");
+    Request request1 =
+            new Request.Builder()
+                    .url("http://localhost:" + 8080 + "/foo")
+                    .post(requestBody)
+                    .addHeader("X-Trino-Routing-Group", "custom")
+                    .build();
+
+
 
     // If the header is present the routing group is the value of that header.
     when(mockRequest.getHeader(ROUTING_GROUP_HEADER)).thenReturn("batch_backend");

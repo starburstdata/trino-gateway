@@ -40,6 +40,11 @@
           <artifactId>jackson-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-parser</artifactId>
+            <version>423</version>
+        </dependency>
+        <dependency>
             <groupId>io.trino.gateway</groupId>
             <artifactId>baseapp</artifactId>
         </dependency>

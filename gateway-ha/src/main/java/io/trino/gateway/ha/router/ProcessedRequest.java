@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.io.CharStreams;
 import io.trino.gateway.ha.config.ProcessedRequestConfig;
+import io.trino.sql.parser.ParsingException;
 import io.trino.sql.parser.ParsingOptions;
 import io.trino.sql.parser.SqlParser;
 import io.trino.sql.tree.Identifier;
@@ -18,6 +19,11 @@ import io.trino.sql.tree.Table;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.Call;
+import okhttp3.HttpUrl;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 import org.javalite.common.Base64;
 
 import java.io.BufferedReader;
@@ -89,6 +95,9 @@ public class ProcessedRequest
         catch (IOException e) {
             log.warn("Error extracting request body for rules processing: " + e.getMessage());
         }
+        catch (ParsingException e) {
+            log.info("Could not parse request body as SQL: " + body + "; Message: " + e.getMessage());
+        }
     }
 
     private void getTables(Node node, Set<QualifiedName> tables)
@@ -152,6 +161,32 @@ public class ProcessedRequest
                 }
                 catch (JsonProcessingException e) {
                     log.warn("Could not deserialize bearer token as json: " + token);
+                    OkHttpClient client = new OkHttpClient();
+                    HttpUrl httpUrl = HttpUrl.parse("https://oauth2.googleapis.com/tokeninfo")
+                            .newBuilder()
+                            .addQueryParameter("access_token", token)
+                            .build();
+                    Request tokenRequest = new Request.Builder().url(httpUrl).build();
+                    Call call = client.newCall(tokenRequest);
+                    try (Response res = call.execute()) {
+                        log.debug(res.toString());
+                        if (res.body().string().contains(userField)) {
+                            mapper = new ObjectMapper();
+                            node = null;
+                            try {
+                                node = mapper.readTree(token);
+                                if (node.has(userField)) {
+                                    log.debug("Trying to extract user from json. User: " + node.get(userField).asText());
+                                    return Optional.of(node.get(userField).asText());
+                                }
+                            } catch (JsonProcessingException ex) {
+                                log.debug("Could not deserialize token info response to json: " + res.body().string());
+                            }
+                        }
+                    }
+                    catch (IOException ex) {
+                        log.debug("Call to access token endpoint failed: " + ex.getMessage());
+                    }
                 }
                 if (header.split(".").length == 3) { //this is a JWS
                     log.debug("Trybing to extract from JWS");

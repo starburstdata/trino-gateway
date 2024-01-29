@@ -175,7 +175,7 @@ public class ProcessedRequest
                             mapper = new ObjectMapper();
                             node = null;
                             try {
-                                node = mapper.readTree(token);
+                                node = mapper.readTree(responseBody);
                                 if (node.has(userField)) {
                                     log.debug("Trying to extract user from json. User: " + node.get(userField).asText());
                                     return Optional.of(node.get(userField).asText());

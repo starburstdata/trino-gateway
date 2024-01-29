@@ -169,8 +169,9 @@ public class ProcessedRequest
                     Request tokenRequest = new Request.Builder().url(httpUrl).build();
                     Call call = client.newCall(tokenRequest);
                     try (Response res = call.execute()) {
+                        String responseBody = res.body().string();
                         log.debug(res.toString());
-                        if (res.body().string().contains(userField)) {
+                        if (responseBody.contains(userField)) {
                             mapper = new ObjectMapper();
                             node = null;
                             try {
@@ -180,7 +181,7 @@ public class ProcessedRequest
                                     return Optional.of(node.get(userField).asText());
                                 }
                             } catch (JsonProcessingException ex) {
-                                log.debug("Could not deserialize token info response to json: " + res.body().string());
+                                log.debug("Could not deserialize token info response to json: " + responseBody);
                             }
                         }
                     }

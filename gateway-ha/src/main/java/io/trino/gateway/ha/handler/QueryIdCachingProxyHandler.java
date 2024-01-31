@@ -49,6 +49,7 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
   public static final String HOST_HEADER = "Host";
   private static final int QUERY_TEXT_LENGTH_FOR_HISTORY = 200;
   private static final Pattern QUERY_ID_PATTERN = Pattern.compile(".*[/=?](\\d+_\\d+_\\d+_\\w+).*");
+  private static final Pattern QUERY_ID_PARAM_PATTERN = Pattern.compile(".*(?:%2F|=)(\\d+_\\d+_\\d+_\\w+).*");
 
   private static final Pattern EXTRACT_BETWEEN_SINGLE_QUOTES = Pattern.compile("'([^\\s']+)'");
 
@@ -116,7 +117,7 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
     }
 
     if (!Strings.isNullOrEmpty(queryParams)) {
-      Matcher matcher = QUERY_ID_PATTERN.matcher(queryParams);
+      Matcher matcher = QUERY_ID_PARAM_PATTERN.matcher(queryParams);
       if (matcher.matches()) {
         queryId = matcher.group(1);
       }

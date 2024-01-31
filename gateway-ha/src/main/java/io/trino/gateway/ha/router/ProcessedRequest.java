@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -129,6 +130,115 @@ public class ProcessedRequest
         }
     }
 
+    private Optional<String> extractUserFromBearerAuth(String header, String userField)
+    {
+        log.debug("Trying to extract user from bearer token");
+        int space = header.indexOf(' ');
+        if ((space < 0) || !header.substring(0, space).equalsIgnoreCase("bearer")) {
+            return Optional.empty();
+        }
+
+        String token = header.substring(space + 1).trim();
+        ObjectMapper mapper = new ObjectMapper();
+
+        if (header.split(".").length == 3) { //this is probably a JWS
+            log.debug("Trying to extract from JWS");
+            token = header.split(".")[1];
+            try {
+                JsonNode node = mapper.readTree(new String(Base64.getDecoder().decode(token)));
+                if (node.has(userField)) {
+                    log.debug("Trying to extract user from JWS json. User: " + node.get(userField).asText());
+                    return Optional.of(node.get(userField).asText());
+                }
+            }
+            catch (JsonProcessingException e) {
+                log.warn("Could not deserialize bearer token as json");
+            }
+        }
+
+        String responseBody = googleUserInfo(token);
+        if (responseBody.contains(userField)) {
+            mapper = new ObjectMapper();
+            try {
+                JsonNode node = mapper.readTree(responseBody);
+                if (node.has(userField)) {
+                    log.debug("Trying to extract user from json. User: " + node.get(userField).asText());
+                    return Optional.of(node.get(userField).asText());
+                }
+            } catch (JsonProcessingException ex) {
+                log.debug("Could not deserialize token info response to json: " + responseBody);
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private String googleUserInfo(String token)
+    {
+        OkHttpClient client = new OkHttpClient();
+        //TODO: add config to support different IDPs
+        HttpUrl httpUrl = HttpUrl.parse("https://oauth2.googleapis.com/tokeninfo")
+                .newBuilder()
+                .addQueryParameter("access_token", token)
+                .build();
+        Request tokenRequest = new Request.Builder().url(httpUrl).build();
+        Call call = client.newCall(tokenRequest);
+        try (Response res = call.execute()) {
+            return res.body().string();
+        }
+        catch (IOException ex) {
+            log.debug("Call to access token endpoint failed: " + ex.getMessage());
+        }
+        return "{}";
+    }
+
+    private Optional<String> extractUserFromAuthorizationHeader(String header, String userField)
+    {
+        if (header == null) {
+            return Optional.empty();
+        }
+
+        if (header.contains("Basic")) {
+            log.debug("Extracted user from basic auth");
+            return Optional.of(new String(Base64.getDecoder().decode(header.split(" ")[2]), StandardCharsets.UTF_8).split(":")[0]);
+        }
+
+        if (header.toLowerCase().contains("bearer")) {
+            return extractUserFromBearerAuth(header, userField);
+        }
+        return Optional.empty();
+    }
+
+    private Optional<String> extractUserFromCookies(HttpServletRequest request, String userField)
+    {
+        if (request.getCookies() == null) {
+            return Optional.empty();
+        }
+        log.debug("Trying to get user from cookie");
+        Optional<Cookie> uiToken = Arrays.stream(request.getCookies()).
+                filter(cookie -> cookie.getName().equals("Trino-UI-Token")
+                        || cookie.getName().equals("__Secure-Trino-ID-Token")).findAny();
+        Optional<String> user = uiToken.map(cookie -> {
+            if (cookie.getValue().split(".").length == 3) { //this is a JWS
+                log.debug("Found JWS cookie");
+                String token = cookie.getValue().split(".")[1];
+                try {
+                    ObjectMapper mapper = new ObjectMapper();
+                    JsonNode node = mapper.readTree(new String(Base64.getDecoder().decode(token)));
+                    if (node.has(userField)) {
+                        log.debug("Got user from cookie");
+                        return node.get(userField).asText();
+                    }
+                }
+                catch (JsonProcessingException e) {
+                    log.warn("Could not deserialize bearer token as json");
+                }
+            }
+            return null;
+        });
+        return user;
+    }
+
     private Optional<String> extractUser(HttpServletRequest request, String userField)
     {
         String header;
@@ -137,101 +247,12 @@ public class ProcessedRequest
             log.debug("Extracted X-Trino-User");
             return Optional.of(header);
         }
-        header = request.getHeader("Authorization");
-        if (header != null) {
-            if (header.contains("Basic")) {
-                log.debug("Extracted user from basic auth");
-                return Optional.of(new String(Base64.getDecoder().decode(header.split(" ")[2]), StandardCharsets.UTF_8).split(":")[0]);
-            }
-            if (header.toLowerCase().contains("bearer")) {
-                log.debug("Trying to extract user from bearer token");
-                int space = header.indexOf(' ');
-                if ((space < 0) || !header.substring(0, space).equalsIgnoreCase("bearer")) {
-                    return Optional.empty();
-                }
-                String token = header.substring(space + 1).trim();
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode node = null;
-                try {
-                    node = mapper.readTree(token);
-                    if (node.has(userField)) {
-                        log.debug("Trying to extract user from json. User: " + node.get(userField).asText());
-                        return Optional.of(node.get(userField).asText());
-                    }
-                }
-                catch (JsonProcessingException e) {
-                    log.warn("Could not deserialize bearer token as json: " + token);
-                    OkHttpClient client = new OkHttpClient();
-                    HttpUrl httpUrl = HttpUrl.parse("https://oauth2.googleapis.com/tokeninfo")
-                            .newBuilder()
-                            .addQueryParameter("access_token", token)
-                            .build();
-                    Request tokenRequest = new Request.Builder().url(httpUrl).build();
-                    Call call = client.newCall(tokenRequest);
-                    try (Response res = call.execute()) {
-                        String responseBody = res.body().string();
-                        log.debug(res.toString());
-                        if (responseBody.contains(userField)) {
-                            mapper = new ObjectMapper();
-                            node = null;
-                            try {
-                                node = mapper.readTree(responseBody);
-                                if (node.has(userField)) {
-                                    log.debug("Trying to extract user from json. User: " + node.get(userField).asText());
-                                    return Optional.of(node.get(userField).asText());
-                                }
-                            } catch (JsonProcessingException ex) {
-                                log.debug("Could not deserialize token info response to json: " + responseBody);
-                            }
-                        }
-                    }
-                    catch (IOException ex) {
-                        log.debug("Call to access token endpoint failed: " + ex.getMessage());
-                    }
-                }
-                if (header.split(".").length == 3) { //this is a JWS
-                    log.debug("Trybing to extract from JWS");
-                    token = header.split(".")[1];
-                    try {
-                        node = mapper.readTree(new String(Base64.getDecoder().decode(token)));
-                        if (node.has(userField)) {
-                            log.debug("Trying to extract user from JWS json. User: " + node.get(userField).asText());
-                            return Optional.of(node.get(userField).asText());
-                        }
-                    }
-                    catch (JsonProcessingException e) {
-                        log.warn("Could not deserialize bearer token as json");
-                    }
-                }
-            }
-        }
-
-        if (request.getCookies() != null) {
-            log.debug("Trying to get user from cookie");
-            Optional<Cookie> uiToken = Arrays.stream(request.getCookies()).
-                    filter(cookie -> cookie.getName().equals("Trino-UI-Token")
-                            || cookie.getName().equals("__Secure-Trino-ID-Token")).findAny();
-            Optional<String> user = uiToken.map(cookie -> {
-                if (cookie.getValue().split(".").length == 3) { //this is a JWS
-                    log.debug("Found JWS cookie");
-                    String token = cookie.getValue().split(".")[1];
-                    try {
-                        ObjectMapper mapper = new ObjectMapper();
-                        JsonNode node = mapper.readTree(new String(Base64.getDecoder().decode(token)));
-                        if (node.has(userField)) {
-                            log.debug("Got user from cookie");
-                            return node.get(userField).asText();
-                        }
-                    }
-                    catch (JsonProcessingException e) {
-                        log.warn("Could not deserialize bearer token as json");
-                    }
-                }
-                return null;
-            });
+        Optional<String> user = extractUserFromAuthorizationHeader(request.getHeader("Authorization"), userField);
+        if (user.isPresent()) {
             return user;
         }
-        return Optional.empty();
+
+        return extractUserFromCookies(request, userField);
     }
 
     public String getBody()

@@ -114,6 +114,13 @@ public class QueryIdCachingProxyHandler extends ProxyHandler {
         queryId = matcher.group(1);
       }
     }
+
+    if (!Strings.isNullOrEmpty(queryParams)) {
+      Matcher matcher = QUERY_ID_PATTERN.matcher(queryParams);
+      if (matcher.matches()) {
+        queryId = matcher.group(1);
+      }
+    }
     log.debug("query id in url [{}]", queryId);
     return queryId;
   }
